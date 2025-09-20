@@ -1,0 +1,12 @@
+#[derive(diesel_derive_enum::DbEnum, Debug, strum::VariantArray, Clone)]
+pub enum EventAction {
+    Insert,
+    Update,
+    Delete,
+    Pop,
+    Reset,
+    Init,
+    Undo,
+    Redo,
+    Seek,
+}
