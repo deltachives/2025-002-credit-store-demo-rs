@@ -1,94 +1,48 @@
 use std::{
     fmt::Display,
-    sync::mpsc::{SendError, Sender},
+    sync::mpsc::{Receiver, RecvError, SendError, Sender},
 };
 
 use crate::db::{
-    event_accumulator::{EaThreadMessage, EventSourcable, EventSourcableError},
+    event_accumulator::{EaCommand, EaWorkError, EventSourcable, EventSourcableError},
     models::*,
 };
 
 use diesel::prelude::*;
 
-// use diesel::{
-//     associations::HasTable,
-//     query_builder::{AsQuery, IntoUpdateTarget, QueryFragment, UpdateStatement},
-//     sqlite::Sqlite,
-// };
-
 use thiserror::Error;
 
-#[derive(Error, Debug)]
-pub enum HeadRecOpError {
-    #[error("Table action error: {0:?}")]
-    DieselError(#[from] diesel::result::Error),
+use chrono;
 
-    #[error("Failed to send message: {0:?}")]
-    ThreadMessageSendError(#[from] SendError<EaThreadMessage>),
-}
-
-// pub trait InsertHeadRec {
-//     type NewRec;
-//     type Rec;
-
-//     fn insert_head_rec(
-//         conn: &mut SqliteConnection,
-//         table: impl Table,
-//         object: Self::NewRec,
-//         tx_ea_msg: Sender<EaThreadMessage>,
-//     ) -> Result<Self::Rec, HeadRecOpError> {
-//         let out = diesel::insert_into(table)
-//             .values(&object)
-//             .returning(CreditStoreHeadRec::as_returning())
-//             .get_result(conn)?;
-
-//         tx_ea_msg.send(EaThreadMessage::DbWrite {
-//             table_name: object.get_table_group_id(),
-//         })?;
-
-//         Ok(out)
-//     }
-// }
-
-// // A very complex automation... Using macro rules or derives or other methods might be better
-// pub trait UpdateHeadRec {
-//     fn update_head_rec<Model, Tab>(
-//         conn: &mut SqliteConnection,
-//         table: Tab,
-//         object: Model,
-//         tx_ea_msg: Sender<EaThreadMessage>,
-//     ) -> Result<usize, HeadRecOpError>
-//     where
-//         Model: AsChangeset<Target = Tab> + Insertable<Tab>,
-//         Tab: Identifiable
-//             + QueryFragment<Sqlite>
-//             + HasTable<Table = Tab>
-//             + diesel::Table
-//             + IntoUpdateTarget
-//             + AsChangeset
-//             + GetTableName,
-//         <Tab as QuerySource>::FromClause: QueryFragment<Sqlite>,
-//         <Tab as IntoUpdateTarget>::WhereClause: QueryFragment<Sqlite>,
-//         <Model as AsChangeset>::Changeset: QueryFragment<Sqlite>,
-//         UpdateStatement<
-//             Tab,
-//             <Tab as IntoUpdateTarget>::WhereClause,
-//             <Model as AsChangeset>::Changeset,
-//         >: AsQuery,
-//     {
-//         let written = diesel::update(table).set(object).execute(conn)?;
-
-//         tx_ea_msg.send(EaThreadMessage::DbWrite {
-//             table_name: table.get_table_name(),
-//         })?;
-
-//         Ok(written)
-//     }
-// }
+use log::*;
 
 #[derive(Debug, strum::VariantArray)]
 pub enum HeadTable {
     CreditStore,
+}
+
+#[derive(Error, Debug)]
+pub enum DbActionAssertionError {
+    #[error("Services wrong table. Expected {expected:?} got {actual:?}")]
+    InvalidTableServiced { expected: String, actual: String },
+}
+
+#[derive(Error, Debug)]
+pub enum DbActionError {
+    #[error("Table action error: {0:?}")]
+    DieselError(#[from] diesel::result::Error),
+
+    #[error("Failed to send message: {0:?}")]
+    SendError(#[from] SendError<EaCommand>),
+
+    #[error("Failed to receive message: {0:?}")]
+    RecvError(#[from] RecvError),
+
+    #[error("Error from event accumulator for work: {0:?}")]
+    EaWorkError(#[from] EaWorkError),
+
+    #[error("Assertion failed: {0:?}")]
+    AssertionFailed(#[from] DbActionAssertionError),
 }
 
 impl Display for HeadTable {
@@ -100,14 +54,65 @@ impl Display for HeadTable {
 }
 
 pub fn send_write_event_for_head(
-    tx_ea_msg: &Sender<EaThreadMessage>,
+    tx_ea_msg: &Sender<EaCommand>,
     head_table: HeadTable,
-) -> Result<(), SendError<EaThreadMessage>> {
+) -> Result<(), SendError<EaCommand>> {
     let table_name = head_table.to_string();
 
-    tx_ea_msg.send(EaThreadMessage::DbWrite { table_name })?;
+    tx_ea_msg.send(EaCommand::DbWrite { table_name })?;
 
     Ok(())
+}
+
+/// Inserts an event creating a new object
+pub fn credit_store_event_blocking_insert(
+    mut_conn: &mut SqliteConnection,
+    tx_cmd_to_ea: &Sender<EaCommand>,
+    rx_ea_work_done: &Receiver<Result<String, EaWorkError>>,
+    object: &CreditStoreObject,
+    event_stack_level: i32,
+) -> Result<CreditStoreEvent, DbActionError> {
+    use crate::autogen::schema::credit_store_events::dsl;
+
+    // Since we're inserting a new object, it should get a unique id.
+    // We want each person to be unique, so let's hash their name as an ID.
+    let new_object_id = object.person.as_bytes().iter().map(|n| i32::from(*n)).sum();
+
+    let new_event = NewCreditStoreEvent {
+        person: object.person.clone(),
+        credits: object.credits,
+        opt_object_id: Some(new_object_id),
+        opt_event_id: None,
+        opt_event_arg: None,
+        event_stack_level,
+        event_action: crate::autogen::schema::EventAction::Insert,
+        created_on: &format!("{:?}", chrono::offset::Local::now()),
+    };
+
+    let entry: CreditStoreEvent = diesel::insert_into(dsl::credit_store_events)
+        .values(new_event)
+        .returning(CreditStoreEvent::as_returning())
+        .get_result(mut_conn)?;
+
+    send_write_event_for_head(tx_cmd_to_ea, HeadTable::CreditStore)?;
+
+    info!("awaiting event accumulator");
+
+    let table_serviced = rx_ea_work_done.recv()??;
+
+    info!("Table {table_serviced} has been serviced!");
+
+    if table_serviced != HeadTable::CreditStore.to_string() {
+        // We are the only ones who own the receiver, so no service race condition should happen.
+        Err(DbActionError::AssertionFailed(
+            DbActionAssertionError::InvalidTableServiced {
+                expected: HeadTable::CreditStore.to_string(),
+                actual: table_serviced,
+            },
+        ))
+    } else {
+        Ok(entry)
+    }
 }
 
 pub struct CreditStoreEventSourcable {}

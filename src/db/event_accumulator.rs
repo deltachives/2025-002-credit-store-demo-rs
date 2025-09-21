@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use crate::db::loader::{self, EstablishConnectionError};
 
-pub enum EaThreadMessage {
+pub enum EaCommand {
     DbWrite {
         table_name: String,
     },
@@ -121,7 +121,7 @@ pub trait SourceHeadTable {
     ) -> Result<(), EventSourcableError>;
 }
 
-/// These capabilities allow us to manage a table head from its events
+/// These traits allow us to manage a table head from its events
 pub trait EventSourcable:
     ReadEventTableVersion
     + WriteEventTableVersion
@@ -135,12 +135,18 @@ pub trait EventSourcable:
 }
 
 #[derive(Error, Debug)]
+pub enum EaWorkError {
+    #[error("Requested functionality is yet to be implemented")]
+    Unimplemented,
+}
+
+#[derive(Error, Debug)]
 pub enum SpawnEaBgWorkerThreadError {
     #[error("Could not find table name {0:?} in head access lock map")]
     TableNameNotInLockMap(String),
 
     #[error("Could not send message: {0:?}")]
-    SendError(#[from] SendError<String>),
+    SendError(#[from] SendError<Result<String, EaWorkError>>),
 
     #[error("Error while trying to receive message: {0:?}")]
     RecvError(#[from] RecvError),
@@ -156,24 +162,21 @@ pub enum SpawnEaBgWorkerThreadError {
 }
 
 pub fn spawn_ea_bg_worker_thread<Src: EventSourcable + 'static + Send>(
-    rx_ea_msg: Receiver<EaThreadMessage>,
-    tx_work_done: Sender<String>,
+    rx_cmd_to_ea: Receiver<EaCommand>,
+    tx_ea_work_done: Sender<Result<String, EaWorkError>>,
     head_access_lock_map: HashMap<String, Arc<Mutex<()>>>,
     event_sourcable_map: HashMap<String, Src>,
 ) -> JoinHandle<Result<(), SpawnEaBgWorkerThreadError>> {
     thread::spawn(move || {
-        let mut mut_conn = loader::establish_connection()?;
+        let mut _mut_conn = loader::establish_connection()?;
 
         loop {
-            // Wait for work. A database write event means that new table events need to be accumulated.
-            let message = rx_ea_msg.recv()?;
+            // Wait for work
+            let message = rx_cmd_to_ea.recv()?;
 
             match message {
-                EaThreadMessage::DbWrite { table_name } => {
-                    {
-                        // Work has arrived!
-                        info!("Work has arrived!");
-
+                EaCommand::DbWrite { table_name } => {
+                    let result: Result<String, EaWorkError> = {
                         // This is dropped at the end of this block, so we're safe until then to write!
                         let _lock = head_access_lock_map
                             .get(&table_name)
@@ -183,23 +186,28 @@ pub fn spawn_ea_bg_worker_thread<Src: EventSourcable + 'static + Send>(
                             .lock()
                             .map_err(|e| SpawnEaBgWorkerThreadError::PoisonError(e.to_string()))?;
 
-                        let event_sourcable = event_sourcable_map.get(&table_name).ok_or(
+                        // Work has arrived!
+                        info!("Work has arrived!");
+
+                        let _event_sourcable = event_sourcable_map.get(&table_name).ok_or(
                             SpawnEaBgWorkerThreadError::TableNameNotInLockMap(table_name.clone()),
                         )?;
 
-                        let events = event_sourcable.read_event_table(&mut mut_conn, None)?;
+                        // let events = event_sourcable.read_event_table(&mut mut_conn, None)?;
 
-                        let (_event_data, obj) = events[0].clone();
+                        // let (_event_data, obj) = events[0].clone();
 
-                        event_sourcable.update_head_table_row(&mut mut_conn, 1, obj)?;
+                        // event_sourcable.update_head_table_row(&mut mut_conn, 1, obj)?;
 
                         // Generate the head table marked by table_name
-                    }
+
+                        Err(EaWorkError::Unimplemented)
+                    };
 
                     // We are done with work! Let them know!
-                    tx_work_done.send(table_name)?;
+                    tx_ea_work_done.send(result)?;
                 }
-                EaThreadMessage::DbCheckout {
+                EaCommand::DbCheckout {
                     table_name,
                     opt_event_id,
                 } => {
@@ -219,14 +227,19 @@ pub fn spawn_ea_bg_worker_thread<Src: EventSourcable + 'static + Send>(
                         ))?
                         .lock()
                         .map_err(|e| SpawnEaBgWorkerThreadError::PoisonError(e.to_string()))?;
+
+                    // We are done with work! Let them know!
+                    tx_ea_work_done.send(Ok(table_name))?;
                 }
 
-                EaThreadMessage::Quit => break,
+                // Stop the thread server
+                EaCommand::Quit => {
+                    info!("quitting!");
+                    break;
+                }
             }
         }
 
         Ok(())
     })
 }
-
-mod actions {}
