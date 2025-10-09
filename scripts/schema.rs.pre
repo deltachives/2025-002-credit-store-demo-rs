@@ -3,10 +3,5 @@ pub enum EventAction {
     Insert,
     Update,
     Delete,
-    Pop,
-    Reset,
-    Init,
-    Undo,
-    Redo,
-    Seek,
+    Frame,
 }

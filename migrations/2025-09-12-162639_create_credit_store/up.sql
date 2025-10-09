@@ -20,7 +20,7 @@ CREATE TABLE credit_store_events (
   id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
   person TEXT UNIQUE NOT NULL,
   credits INTEGER NOT NULL,
-  event_action TEXT CHECK(event_action IN ('insert', 'update', 'delete', 'pop', 'reset', 'init', 'undo', 'redo', 'seek')) NOT NULL,
+  event_action TEXT CHECK(event_action IN ('insert', 'update', 'delete', 'frame')) NOT NULL,
   opt_object_id INTEGER NULL,
   opt_event_id INTEGER NULL REFERENCES credit_store_events(id),
   opt_event_arg INTEGER NULL,

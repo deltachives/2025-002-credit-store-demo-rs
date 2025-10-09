@@ -3,15 +3,31 @@ pub enum EventAction {
     Insert,
     Update,
     Delete,
-    Pop,
-    Reset,
-    Init,
-    Undo,
-    Redo,
-    Seek,
+    Frame,
 }
 
 // @generated automatically by Diesel CLI.
+
+diesel::table! {
+    coin_store_diffs (id) {
+        id -> Integer,
+        obj_id -> Integer,
+        person -> Text,
+        coins -> Integer,
+    }
+}
+
+diesel::table! {
+    coin_store_events (id) {
+        id -> Integer,
+        opt_diff_id -> Nullable<Integer>,
+        ev_action -> Text,
+        span -> Integer,
+        frame -> Integer,
+        created_on_ts -> Float,
+        ev_desc -> Text,
+    }
+}
 
 diesel::table! {
     credit_store (id) {
@@ -50,7 +66,11 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(coin_store_events -> coin_store_diffs (opt_diff_id));
+
 diesel::allow_tables_to_appear_in_same_query!(
+    coin_store_diffs,
+    coin_store_events,
     credit_store,
     credit_store_events,
     credit_store_head,
