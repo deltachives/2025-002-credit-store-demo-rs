@@ -22,7 +22,29 @@ class RuleWithStatus:
 
 
 def make_rules() -> List[Rule]:
-    return [Rule("credit_store_events (id)", "event_action -> Text", "event_action -> crate::autogen::schema::EventActionMapping")]
+
+    with open(os.path.join(project_path, "scripts", "schema.rs.replace"), "r") as f1:
+        lines = f1.readlines()
+
+    lines_filtered = (
+        lines.__iter__()
+        | pipe.OfIter[str].filter(lambda line: line.strip() != "" and not line.strip().startswith("//"))
+        | pipe.OfIter[str].to_list()
+    )
+
+    if len(lines_filtered) == 0 or len(lines_filtered) % 3 != 0:
+        raise Exception("schema.rs.replace Must be composed of triplets")
+
+    mut_results = []
+
+    for i in range(len(lines_filtered) // 3):
+        activator = lines_filtered[3*i].strip()
+        target = lines_filtered[3*i + 1].strip()
+        replacement = lines_filtered[3*i + 2].strip()
+
+        mut_results.append(Rule(activator, target, replacement))
+
+    return mut_results
 
 
 def postprocess(rules: List[Tuple[str, str]]):
@@ -61,6 +83,10 @@ def postprocess(rules: List[Tuple[str, str]]):
 
         for line in lines:
             f.write(get_new_line(line))
+
+    for rule in mut_rules_with_status:
+        if not rule.spent:
+            raise Exception(f'Rule "{rule.rule.activator}" "{rule.rule.target}" has not been activated')
 
 
 if __name__ == "__main__":

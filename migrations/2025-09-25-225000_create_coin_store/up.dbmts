@@ -1,0 +1,9 @@
+#[derive(EventSourcing)]
+CREATE TABLE coin_store_diffs (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  obj_id INTEGER NOT NULL,
+  #[es(latest)]
+  person TEXT NOT NULL,
+  #[es(sum)]
+  coins INTEGER NOT NULL
+);

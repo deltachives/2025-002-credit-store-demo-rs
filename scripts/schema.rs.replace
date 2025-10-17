@@ -1,0 +1,25 @@
+// Triplets: activator, target, replacement
+
+coin_store_events (id)
+ev_action -> Text
+ev_action -> crate::autogen::schema::EventActionMapping
+
+coin_store_events_grouped (id)
+ev_action -> Text
+ev_action -> crate::autogen::schema::EventActionMapping
+
+coin_store_events_grouped_partial (id)
+ev_action -> Text
+ev_action -> crate::autogen::schema::EventActionMapping
+
+coin_store_hist (id)
+obj_state -> Text
+obj_state -> crate::autogen::schema::ObjStateMapping
+
+coin_store_hist_partial (id)
+obj_state -> Text
+obj_state -> crate::autogen::schema::ObjStateMapping
+
+credit_store_events (id)
+event_action -> Text
+event_action -> crate::autogen::schema::EventActionMapping

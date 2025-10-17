@@ -1,5 +1,12 @@
--- This file should undo anything in `up.sql`
 DROP TABLE coin_store_diffs;
 DROP TABLE coin_store_events;
+DROP TABLE coin_store_events_grouped;
+DROP TABLE coin_store_events_grouped_partial;
+DROP TABLE coin_store_hist;
+DROP TABLE coin_store_hist_partial;
 DROP VIEW v_coin_store_events_grouped;
-DROP VIEW v_coin_store_objects;
+DROP VIEW v_coin_store_hist;
+DROP VIEW v_coin_store_hist_partial;
+DROP TRIGGER trg_update_coin_store_events_grouped;
+DROP TRIGGER trg_update_coin_store_hist;
+DROP TRIGGER trg_update_coin_store_hist_partial;
