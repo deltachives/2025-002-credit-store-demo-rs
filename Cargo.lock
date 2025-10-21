@@ -219,6 +219,7 @@ dependencies = [
  "clap",
  "diesel",
  "diesel-derive-enum",
+ "diesel-derive-newtype",
  "dotenvy",
  "env_logger",
  "itertools",
@@ -294,6 +295,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50a8c082045d01debc8589f8a0db9f2855a37c99c9b031325c856b5b98e1625f"
 dependencies = [
  "heck 0.4.1",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "diesel-derive-newtype"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5adf688c584fe33726ce0e2898f608a2a92578ac94a4a92fcecf73214fe0716"
+dependencies = [
  "proc-macro2",
  "quote",
  "syn",

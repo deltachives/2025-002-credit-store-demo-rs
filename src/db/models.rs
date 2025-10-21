@@ -1,6 +1,30 @@
 // Coin Store
 
-mod coin_store {
+use diesel::expression::AsExpression;
+use diesel_derive_newtype::*;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, DieselNewType)]
+pub struct Person(String);
+
+#[derive(Error, Debug, AsExpression)]
+#[diesel(sql_type = diesel::sql_types::Text)]
+pub enum PersonNewError {
+    #[error("Person name cannot be admin")]
+    AdminNotAllowed,
+}
+
+impl Person {
+    pub fn new(s: &str) -> Result<Self, PersonNewError> {
+        if s.to_lowercase() == "admin" {
+            Err(PersonNewError::AdminNotAllowed)
+        } else {
+            Ok(Person(s.to_owned()))
+        }
+    }
+}
+
+pub mod coin_store {
     use diesel::prelude::*;
 
     crate::macros::diesel_hist_models::create_diesel_hist_structs_read! {
@@ -12,7 +36,7 @@ mod coin_store {
         hist_partial_table: coin_store_hist_partial,
 
         fields_read: {
-            person: String,
+            person: super::Person,
             coins: i32,
         }
     }
@@ -30,7 +54,7 @@ mod coin_store {
         },
 
         fields_write_ref: {
-            person: &'a str,
+            person: &'a super::Person,
         },
     }
 }
