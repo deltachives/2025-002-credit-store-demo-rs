@@ -6,7 +6,7 @@ use std::{io::stdin, str::FromStr};
 pub fn read_str_or_quit(item_name: &str) -> Option<String> {
     let mut mut_input = String::new();
 
-    println!("enter {} or type [q]uit: ", item_name);
+    println!("enter {item_name} or type [q]uit: ");
     stdin().read_line(&mut mut_input).unwrap();
 
     mut_input = mut_input.trim().to_owned();
@@ -35,7 +35,11 @@ pub fn read_input_from_user_until_valid_or_quit<T: FromStr>(item_name: &str) -> 
 
         match parsed {
             Ok(item) => break Some(item),
-            Err(_) => continue,
+            Err(_) => {
+                mut_input = "".to_owned();
+
+                continue;
+            }
         }
     }
 }

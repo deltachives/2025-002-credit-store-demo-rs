@@ -1,5 +1,7 @@
 /// Should not be constructed manually. This signals the invariant of an existent non-duplicate span frame in db
-/// See `create_span_frame` functions.
+/// See `create_span_frame` functions for creating a spanframe and `get_created_span_frames` for getting them.
+/// There are also `close_span_frame` and `reopen_span_frame` options.
+#[derive(Debug, Clone)]
 pub struct SpanFrame {
     pub span: i32,
     pub frame: i32,
@@ -377,7 +379,7 @@ macro_rules! create_diesel_hist_structs_write_one_lifetime {
             Ok(())
         }
 
-        pub fn insert_diff<'a>(conn: &mut SqliteConnection, obj_id: i32, new_common: NewCommon<'a>) -> Result<Diff, diesel::result::Error> {
+        fn insert_diff<'a>(conn: &mut SqliteConnection, obj_id: i32, new_common: NewCommon<'a>) -> Result<Diff, diesel::result::Error> {
             let new_diff = NewDiff::new_with_common(obj_id, new_common);
 
             let out = diesel::insert_into(crate::autogen::schema::$diff_table::dsl::$diff_table)
@@ -392,9 +394,10 @@ macro_rules! create_diesel_hist_structs_write_one_lifetime {
         pub fn insert_event_for_obj<'a>(
             conn: &mut SqliteConnection,
             obj_id: i32,
-            span_frame: crate::macros::diesel_hist_models::SpanFrame,
+            span_frame: &crate::macros::diesel_hist_models::SpanFrame,
             obj_state: crate::autogen::schema::ObjState,
-            ev_desc: &'a str, new_common: NewCommon<'a>
+            ev_desc: &'a str,
+            new_common: NewCommon<'a>
         ) -> Result<Event, diesel::result::Error> {
             use chrono::prelude::*;
 

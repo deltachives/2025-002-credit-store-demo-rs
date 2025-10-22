@@ -1,26 +1,34 @@
 // Coin Store
 
-use diesel::expression::AsExpression;
+use std::str::FromStr;
+
 use diesel_derive_newtype::*;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, DieselNewType)]
 pub struct Person(String);
 
-#[derive(Error, Debug, AsExpression)]
-#[diesel(sql_type = diesel::sql_types::Text)]
-pub enum PersonNewError {
+#[derive(Error, Debug)]
+pub enum PersonFromStrError {
     #[error("Person name cannot be admin")]
     AdminNotAllowed,
 }
 
-impl Person {
-    pub fn new(s: &str) -> Result<Self, PersonNewError> {
+impl FromStr for Person {
+    type Err = PersonFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.to_lowercase() == "admin" {
-            Err(PersonNewError::AdminNotAllowed)
+            Err(PersonFromStrError::AdminNotAllowed)
         } else {
             Ok(Person(s.to_owned()))
         }
+    }
+}
+
+impl Person {
+    pub fn to_inner(&self) -> String {
+        self.0.clone()
     }
 }
 

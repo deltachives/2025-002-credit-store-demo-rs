@@ -1,16 +1,20 @@
-use std::sync::Mutex;
+use crc32fast::Hasher;
+use std::{hash::Hash, sync::Mutex};
 
 use credit_store_demo::{
-    autogen::schema::EventAction, db, drivers, macros::diesel_hist_models::SpanFrame,
+    autogen::schema::ObjState,
+    db, drivers,
+    macros::diesel_hist_models::{CreateSpanFrameError, SpanFrame},
 };
+use deterministic_hash::DeterministicHasher;
 use diesel::{SqliteConnection, query_dsl::methods::FilterDsl};
 use log::*;
 use shi::{cmd, error::ShiError, parent};
 use tap::prelude::*;
 
 struct InternalShellState {
-    _conn: SqliteConnection,
-    _cur_span_frame: SpanFrame,
+    conn: SqliteConnection,
+    cur_span_frame: SpanFrame,
 }
 
 struct _ExternalShellState {}
@@ -25,39 +29,314 @@ fn show_version(_mut_state: &mut InternalShellState, _args: &[String]) -> Result
     Ok("v1.0.0".to_owned())
 }
 
+/// Add a new user to the current coin store frame with 0 coins
 fn coin_store_add_user(
-    _mut_state: &mut InternalShellState,
+    mut_state: &mut InternalShellState,
     _args: &[String],
 ) -> Result<String, ShiError> {
-    todo!()
-}
+    use credit_store_demo::autogen::schema::coin_store_events_grouped::dsl;
+    use credit_store_demo::db::models::*;
+    use diesel::prelude::*;
 
-fn coin_store_remove_user(
-    _mut_state: &mut InternalShellState,
-    _args: &[String],
-) -> Result<String, ShiError> {
-    todo!()
+    let person: Person =
+        match drivers::read_input_from_user_until_valid_or_quit("person (NOT admin!)") {
+            Some(item) => item,
+            None => return Ok("".to_owned()),
+        };
+
+    // let coins: i32 = match drivers::read_input_from_user_until_valid_or_quit("coins (i32)") {
+    //     Some(item) => item,
+    //     None => return Ok("".to_owned()),
+    // };
+
+    // Check if the user already exists in the current spanframe
+    let results: Vec<coin_store::EventGrouped> = dsl::coin_store_events_grouped
+        .pipe(|tbl| FilterDsl::filter(tbl, dsl::person.eq(&person)))
+        .select(coin_store::EventGrouped::as_select())
+        .get_results(&mut mut_state.conn)
+        .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    if !results.is_empty() {
+        return Ok("Error: User already exists".to_owned());
+    }
+
+    let new_common = coin_store::NewCommon {
+        coins: 0,
+        person: &person,
+    };
+
+    let obj_id = {
+        let mut hasher = DeterministicHasher::new(Hasher::new());
+        person.hash(&mut hasher);
+
+        hasher.as_inner().clone().finalize()
+    };
+
+    let _ = coin_store::insert_event_for_obj(
+        &mut mut_state.conn,
+        obj_id as i32,
+        &mut_state.cur_span_frame,
+        ObjState::Insert,
+        "create user",
+        new_common,
+    )
+    .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    Ok("Created user".to_owned())
 }
 
 fn coin_store_delete_user(
-    _mut_state: &mut InternalShellState,
+    mut_state: &mut InternalShellState,
     _args: &[String],
 ) -> Result<String, ShiError> {
-    todo!()
+    use credit_store_demo::autogen::schema::coin_store_events_grouped::dsl;
+    use credit_store_demo::db::models::*;
+    use diesel::prelude::*;
+
+    let person: Person =
+        match drivers::read_input_from_user_until_valid_or_quit("person (NOT admin!)") {
+            Some(item) => item,
+            None => return Ok("".to_owned()),
+        };
+
+    // Check if the user already exists in the current spanframe
+    let results: Vec<coin_store::EventGrouped> = dsl::coin_store_events_grouped
+        .pipe(|tbl| FilterDsl::filter(tbl, dsl::person.eq(&person)))
+        .select(coin_store::EventGrouped::as_select())
+        .get_results(&mut mut_state.conn)
+        .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    if results.is_empty() {
+        return Ok("Error: User does not exist".to_owned());
+    }
+
+    let new_common = coin_store::NewCommon {
+        coins: 0,
+        person: &person,
+    };
+
+    let obj_id = {
+        let mut hasher = DeterministicHasher::new(Hasher::new());
+        person.hash(&mut hasher);
+
+        hasher.as_inner().clone().finalize()
+    };
+
+    let _ = coin_store::insert_event_for_obj(
+        &mut mut_state.conn,
+        obj_id as i32,
+        &mut_state.cur_span_frame,
+        ObjState::Delete,
+        "create user",
+        new_common,
+    )
+    .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    Ok("Deleted user".to_owned())
+}
+
+pub fn display_pretty_table(table_to_print: &[(String, String)]) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    let mut b = Builder::with_capacity(3, 0);
+
+    b.push_record(["person", "total_coins"]);
+
+    for (person, coins) in table_to_print {
+        b.push_record([person, coins]);
+    }
+
+    let mut table = b.build();
+
+    table.with(Style::modern_rounded());
+
+    table.to_string()
+}
+
+pub fn display_pretty_table_for_records(
+    table_to_print: &[(String, String, String, String)],
+) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    let mut b = Builder::with_capacity(3, 0);
+
+    b.push_record(["timestamp", "person", "total_coins", "description"]);
+
+    for (timestamp, person, coins, description) in table_to_print {
+        b.push_record([timestamp, person, coins, description]);
+    }
+
+    let mut table = b.build();
+
+    table.with(Style::modern_rounded());
+
+    table.to_string()
+}
+
+pub fn display_timestamp(timestamp: f32) -> String {
+    use chrono::{DateTime, TimeZone, Utc};
+
+    let timestamp_millis = timestamp as i64;
+
+    let seconds = timestamp_millis / 1000;
+    let nanoseconds = (timestamp_millis % 1000) * 1_000_000;
+
+    let datetime: DateTime<Utc> = Utc
+        .timestamp_opt(seconds, nanoseconds as u32)
+        .single()
+        .unwrap();
+
+    format!("{}", datetime)
 }
 
 fn coin_store_show_wallet(
-    _mut_state: &mut InternalShellState,
+    mut_state: &mut InternalShellState,
     _args: &[String],
 ) -> Result<String, ShiError> {
-    todo!()
+    use credit_store_demo::autogen::schema::coin_store_hist::dsl;
+    use credit_store_demo::db::models::*;
+    use diesel::prelude::*;
+
+    let objects = dsl::coin_store_hist
+        .pipe(|tbl| {
+            FilterDsl::filter(
+                tbl,
+                dsl::grp_span
+                    .eq(mut_state.cur_span_frame.span)
+                    .and(dsl::grp_frame.eq(mut_state.cur_span_frame.frame)),
+            )
+        })
+        .select(coin_store::Hist::as_select())
+        .get_results(&mut mut_state.conn)
+        .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    let table_to_print = objects
+        .iter()
+        .map(|row| (row.person.to_inner(), format!("{}", row.coins)))
+        .collect::<Vec<_>>();
+
+    Ok(format!(
+        "span: {}, frame: {}\n{}",
+        mut_state.cur_span_frame.span,
+        mut_state.cur_span_frame.frame,
+        display_pretty_table(&table_to_print)
+    ))
+}
+
+fn coin_store_show_partial_wallet(
+    mut_state: &mut InternalShellState,
+    _args: &[String],
+) -> Result<String, ShiError> {
+    use credit_store_demo::autogen::schema::coin_store_hist_partial::dsl;
+    use credit_store_demo::db::models::*;
+    use diesel::prelude::*;
+
+    let objects = dsl::coin_store_hist_partial
+        .pipe(|tbl| {
+            FilterDsl::filter(
+                tbl,
+                dsl::grp_span
+                    .eq(mut_state.cur_span_frame.span)
+                    .and(dsl::grp_frame.eq(mut_state.cur_span_frame.frame)),
+            )
+        })
+        .select(coin_store::HistPartial::as_select())
+        .get_results(&mut mut_state.conn)
+        .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    let table_to_print = objects
+        .iter()
+        .map(|row| (row.person.to_inner(), format!("{}", row.coins)))
+        .collect::<Vec<_>>();
+
+    Ok(format!(
+        "span: {}, frame: {}\n{}",
+        mut_state.cur_span_frame.span,
+        mut_state.cur_span_frame.frame,
+        display_pretty_table(&table_to_print)
+    ))
 }
 
 fn coin_store_show_records(
-    _mut_state: &mut InternalShellState,
+    mut_state: &mut InternalShellState,
     _args: &[String],
 ) -> Result<String, ShiError> {
-    todo!()
+    use credit_store_demo::autogen::schema::coin_store_events_grouped::dsl;
+    use credit_store_demo::db::models::*;
+    use diesel::prelude::*;
+
+    let objects: Vec<coin_store::EventGrouped> = dsl::coin_store_events_grouped
+        .pipe(|tbl| {
+            FilterDsl::filter(
+                tbl,
+                dsl::grp_span
+                    .eq(mut_state.cur_span_frame.span)
+                    .and(dsl::grp_frame.eq(mut_state.cur_span_frame.frame)),
+            )
+        })
+        .select(coin_store::EventGrouped::as_select())
+        .get_results(&mut mut_state.conn)
+        .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    let table_to_print = objects
+        .iter()
+        .map(|row| {
+            (
+                display_timestamp(row.created_on_ts),
+                row.person.to_inner(),
+                format!("{}", row.coins),
+                row.ev_desc.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    Ok(format!(
+        "span: {}, frame: {}\n{}",
+        mut_state.cur_span_frame.span,
+        mut_state.cur_span_frame.frame,
+        display_pretty_table_for_records(&table_to_print)
+    ))
+}
+
+fn coin_store_show_partial_records(
+    mut_state: &mut InternalShellState,
+    _args: &[String],
+) -> Result<String, ShiError> {
+    use credit_store_demo::autogen::schema::coin_store_events_grouped_partial::dsl;
+    use credit_store_demo::db::models::*;
+    use diesel::prelude::*;
+
+    let objects = dsl::coin_store_events_grouped_partial
+        .pipe(|tbl| {
+            FilterDsl::filter(
+                tbl,
+                dsl::grp_span
+                    .eq(mut_state.cur_span_frame.span)
+                    .and(dsl::grp_frame.eq(mut_state.cur_span_frame.frame)),
+            )
+        })
+        .select(coin_store::EventGroupedPartial::as_select())
+        .get_results(&mut mut_state.conn)
+        .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    let table_to_print = objects
+        .iter()
+        .map(|row| {
+            (
+                display_timestamp(row.created_on_ts),
+                row.person.to_inner(),
+                format!("{}", row.coins),
+                row.ev_desc.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    Ok(format!(
+        "span: {}, frame: {}\n{}",
+        mut_state.cur_span_frame.span,
+        mut_state.cur_span_frame.frame,
+        display_pretty_table_for_records(&table_to_print)
+    ))
 }
 
 fn coin_store_undo_toggle(
@@ -88,7 +367,7 @@ fn coin_store_checkout(
     todo!()
 }
 
-fn coin_store_reset(
+fn coin_store_soft_reset(
     _mut_state: &mut InternalShellState,
     _args: &[String],
 ) -> Result<String, ShiError> {
@@ -102,11 +381,124 @@ fn coin_store_hard_reset(
     todo!()
 }
 
-fn coin_store_record(
-    _mut_state: &mut InternalShellState,
+fn coin_store_income(
+    mut_state: &mut InternalShellState,
     _args: &[String],
 ) -> Result<String, ShiError> {
-    todo!()
+    use credit_store_demo::autogen::schema::coin_store_events_grouped::dsl;
+    use credit_store_demo::db::models::*;
+    use diesel::prelude::*;
+
+    let person: Person =
+        match drivers::read_input_from_user_until_valid_or_quit("person (NOT admin!)") {
+            Some(item) => item,
+            None => return Ok("".to_owned()),
+        };
+
+    // Check if the user already exists in the current spanframe
+    let results: Vec<coin_store::EventGrouped> = dsl::coin_store_events_grouped
+        .pipe(|tbl| FilterDsl::filter(tbl, dsl::person.eq(&person)))
+        .select(coin_store::EventGrouped::as_select())
+        .get_results(&mut mut_state.conn)
+        .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    if results.is_empty() {
+        return Ok("Error: User does not exist".to_owned());
+    }
+
+    let coins: u32 = match drivers::read_input_from_user_until_valid_or_quit("coins to add (u32)") {
+        Some(item) => item,
+        None => return Ok("".to_owned()),
+    };
+
+    let desc = match drivers::read_str_or_quit("Description") {
+        Some(item) => item,
+        None => return Ok("".to_owned()),
+    };
+
+    let new_common = coin_store::NewCommon {
+        coins: coins as i32,
+        person: &person,
+    };
+
+    let obj_id = {
+        let mut hasher = DeterministicHasher::new(Hasher::new());
+        person.hash(&mut hasher);
+
+        hasher.as_inner().clone().finalize()
+    };
+
+    let _ = coin_store::insert_event_for_obj(
+        &mut mut_state.conn,
+        obj_id as i32,
+        &mut_state.cur_span_frame,
+        ObjState::Update,
+        &desc,
+        new_common,
+    )
+    .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    Ok("Added income for user".to_owned())
+}
+
+fn coin_store_expense(
+    mut_state: &mut InternalShellState,
+    _args: &[String],
+) -> Result<String, ShiError> {
+    use credit_store_demo::autogen::schema::coin_store_events_grouped::dsl;
+    use credit_store_demo::db::models::*;
+    use diesel::prelude::*;
+
+    let person: Person =
+        match drivers::read_input_from_user_until_valid_or_quit("person (NOT admin!)") {
+            Some(item) => item,
+            None => return Ok("".to_owned()),
+        };
+
+    // Check if the user already exists in the current spanframe
+    let results: Vec<coin_store::EventGrouped> = dsl::coin_store_events_grouped
+        .pipe(|tbl| FilterDsl::filter(tbl, dsl::person.eq(&person)))
+        .select(coin_store::EventGrouped::as_select())
+        .get_results(&mut mut_state.conn)
+        .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    if results.is_empty() {
+        return Ok("Error: User does not exist".to_owned());
+    }
+
+    let coins: u32 = match drivers::read_input_from_user_until_valid_or_quit("coins to add (u32)") {
+        Some(item) => item,
+        None => return Ok("".to_owned()),
+    };
+
+    let desc = match drivers::read_str_or_quit("Description") {
+        Some(item) => item,
+        None => return Ok("".to_owned()),
+    };
+
+    let new_common = coin_store::NewCommon {
+        coins: -(coins as i32),
+        person: &person,
+    };
+
+    let obj_id = {
+        let mut hasher = DeterministicHasher::new(Hasher::new());
+        person.hash(&mut hasher);
+
+        hasher.as_inner().clone().finalize()
+    };
+
+    let _ = coin_store::insert_event_for_obj(
+        &mut mut_state.conn,
+        obj_id as i32,
+        &mut_state.cur_span_frame,
+        ObjState::Update,
+        &desc,
+        new_common,
+    )
+    .map_err(|e| ShiError::General { msg: e.to_string() })?;
+
+    Ok("Added income for user".to_owned())
 }
 
 fn coin_store_ls(
@@ -141,18 +533,27 @@ fn _credit_store_events_insert(
     todo!()
 }
 
-pub fn get_or_create_init_span_frame(conn: &mut SqliteConnection) -> SpanFrame {
-    use credit_store_demo::autogen::schema::coin_store_events::dsl::*;
+pub fn get_or_create_init_span_frame(
+    conn: &mut SqliteConnection,
+) -> Result<SpanFrame, CreateSpanFrameError> {
+    // use credit_store_demo::autogen::schema::coin_store_events::dsl::*;
     use credit_store_demo::db::models::*;
-    use diesel::prelude::*;
+    // use diesel::prelude::*;
 
-    let _results: Vec<coin_store::Event> = coin_store_events
-        .pipe(|tbl| FilterDsl::filter(tbl, ev_action.eq(EventAction::Open)))
-        .select(coin_store::Event::as_select())
-        .get_results(conn)
-        .unwrap();
+    // let results: Vec<coin_store::Event> = coin_store_events
+    //     .pipe(|tbl| FilterDsl::filter(tbl, ev_action.eq(EventAction::Open)))
+    //     .select(coin_store::Event::as_select())
+    //     .get_results(conn)
+    //     .unwrap();
 
-    todo!()
+    let spanframes = coin_store::get_created_span_frames(conn)?;
+
+    let opt_first_spanframe = spanframes.iter().find(|sf| sf.span == 1 && sf.frame == 1);
+
+    match opt_first_spanframe {
+        Some(first_spanframe) => Ok((*first_spanframe).clone()),
+        None => Ok(coin_store::create_span_frame(conn, 1, 1, "First Frame!")?),
+    }
 }
 
 fn main() {
@@ -162,12 +563,13 @@ fn main() {
 
     let mut conn = db::loader::establish_connection().expect("Failed to initialize Sqlite db");
 
-    let cur_span_frame = get_or_create_init_span_frame(&mut conn);
+    let cur_span_frame =
+        get_or_create_init_span_frame(&mut conn).expect("Failed to create first frame");
 
     let shell_join = drivers::shell::spawn_shell_loop_thread(
         || InternalShellState {
-            _conn: conn,
-            _cur_span_frame: cur_span_frame,
+            conn,
+            cur_span_frame,
         },
         || {
             vec![
@@ -185,20 +587,20 @@ fn main() {
                             coin_store_add_user,
                         ),
                         cmd!(
-                            "remove",
-                            "Delete a user only within the current coin store frame",
-                            coin_store_remove_user,
-                        ),
-                        cmd!(
                             "delete",
-                            "Delete a user within all span frames",
+                            "Delete a user only within the current coin store frame",
                             coin_store_delete_user,
                         ),
                     ),
                     cmd!(
-                        "record",
-                        "Add a coin transaction record for a user in the current span/frame",
-                        coin_store_record,
+                        "income",
+                        "Add income coins for a user in current span/frame",
+                        coin_store_income,
+                    ),
+                    cmd!(
+                        "expense",
+                        "Add an expense order for a user in current span/frame",
+                        coin_store_expense,
                     ),
                     parent!(
                         "show",
@@ -212,6 +614,19 @@ fn main() {
                             "Show the current span/frame records of transactions made",
                             coin_store_show_records,
                         ),
+                        parent!(
+                            "partial",
+                            cmd!(
+                                "wallet",
+                                "Show the current coin amounts for all users in current span/frame (accounting for undos)",
+                                coin_store_show_partial_wallet,
+                            ),
+                            cmd!(
+                                "records",
+                                "Show the current span/frame records of transactions made (accounting for undos)",
+                                coin_store_show_partial_records,
+                            ),
+                        )
                     ),
                     parent!(
                         "undo",
@@ -241,16 +656,19 @@ fn main() {
                         "Checkout a current active frame",
                         coin_store_checkout,
                     ),
-                    cmd!(
+                    parent!(
                         "reset",
-                        "Resets back to previous span content in a new frame",
-                        coin_store_reset,
-                    ),
-                    cmd!(
-                        "hard_reset",
-                        "Resets to a frame in the lowest span",
-                        coin_store_hard_reset,
-                    ),
+                        cmd!(
+                            "soft",
+                            "Resets back to previous span content in a new frame",
+                            coin_store_soft_reset,
+                        ),
+                        cmd!(
+                            "hard",
+                            "Resets to a frame in the lowest span",
+                            coin_store_hard_reset,
+                        ),
+                    )
                 ),
             ]
         },
