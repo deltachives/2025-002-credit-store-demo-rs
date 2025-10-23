@@ -19,7 +19,3 @@ obj_state -> crate::autogen::schema::ObjStateMapping
 coin_store_hist_partial (id)
 obj_state -> Text
 obj_state -> crate::autogen::schema::ObjStateMapping
-
-credit_store_events (id)
-event_action -> Text
-event_action -> crate::autogen::schema::EventActionMapping
