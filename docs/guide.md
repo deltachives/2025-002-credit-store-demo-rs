@@ -67,7 +67,7 @@ For example:
 
 # Basic Usage
 
-We start in a default span frame of (1, 1). Think of it as a coordinate for the current coin store we're in.
+We start in a default span frame of (1, 1). Think of it as a coordinate for the current coin store history we're in.
 
 We can add users with `coins users add` and also delete them with `coins users delete`. This just creates corresponding insert and delete events.
 
