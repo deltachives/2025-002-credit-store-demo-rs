@@ -43,6 +43,10 @@ For full cycle regeneration,
 source ./.env && rm $DATABASE_URL; diesel migration run && python3 scripts/diesel-postprocess.py
 ```
 
+# Guide
+
+Check out the [guide](./docs/guide.md).
+
 # Contributing
 
 All contributions are welcome!
