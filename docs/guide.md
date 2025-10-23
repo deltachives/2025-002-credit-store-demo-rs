@@ -1,17 +1,24 @@
 # Demo
 
-Hello! Welcome to the demo! This is a little program that tests event sourcing in action.
+Hello! Welcome to the demo! This is a little program that demonstrates event sourcing with diesel.rs.
 
-To get started, run
+To get started,
+
+You will need the diesel CLI. Find its installation instructions from [diesel.rs installing-diesel-cli](https://diesel.rs/guides/getting-started.html#installing-diesel-cli).
+
+You will also need python3 and pip. Refer to their [installation instructions](https://pip.pypa.io/en/stable/installation/) if you don't have them.
+
+then run
 
 ```sh
 git clone https://github.com/deltachives/2025-002-credit-store-demo-rs.git
 cd 2025-002-credit-store-demo-rs
+python3 -m pip install -r requirements.txt
 source ./.env; mkdir -p data; diesel migration run && python3 scripts/diesel-postprocess.py
 cargo run --bin demo
 ```
 
-You can explore all the commands by hitting <TAB> multiple times.
+There is autocomplete in the demo shell that can be used with `<TAB>`. You can explore all the commands by hitting it multiple times.
 
 helptree is a command that can show all the current commands also:
 
@@ -79,7 +86,7 @@ We can view our wallets with `coins show wallet` which shows the total coins for
 
 We can use `coins toggle id` and `coins toggle desc` to toggle events by id or by a pattern in their description.
 
-This allows us to deactivate them so that they do not count towards the accumulative. The results can be viewed with `coins show partial wallet` and `coins show partial records`.
+This allows us to deactivate them so that they do not count towards the total. The results can be viewed with `coins show partial wallet` and `coins show partial records`.
 
 # Resets
 
